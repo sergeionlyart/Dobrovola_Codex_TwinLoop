@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 import time
@@ -27,6 +28,13 @@ def _to_text(data: str | bytes | None) -> str:
     if isinstance(data, bytes):
         return data.decode("utf-8", errors="replace")
     return data
+
+
+def _read_text_file(path: Path) -> str:
+    try:
+        return path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return ""
 
 
 def _read_int_env(name: str, default: int, *, minimum: int, maximum: int) -> int:
@@ -57,6 +65,30 @@ def _render_attempt_log(lines: list[tuple[int, str]]) -> str:
         rendered.append(f"===== attempt {attempt} =====")
         rendered.append(text)
     return "\n".join(rendered).rstrip() + "\n"
+
+
+def _extract_last_agent_message_from_jsonl(stdout_text: str) -> str | None:
+    """Extract the last agent_message text from codex JSONL stdout."""
+    last_message: str | None = None
+    for raw_line in stdout_text.splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        try:
+            payload = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(payload, dict):
+            continue
+        item = payload.get("item")
+        if not isinstance(item, dict):
+            continue
+        if item.get("type") != "agent_message":
+            continue
+        text = item.get("text")
+        if isinstance(text, str) and text.strip():
+            last_message = text.strip()
+    return last_message
 
 
 @dataclass
@@ -126,22 +158,40 @@ def run_codex_exec(
 
     for attempt in range(1, max_attempts + 1):
         output_file.unlink(missing_ok=True)
+        attempt_stdout_path = stdout_log.parent / f".{stdout_log.name}.attempt{attempt}.tmp"
+        attempt_stderr_path = stderr_log.parent / f".{stderr_log.name}.attempt{attempt}.tmp"
+        attempt_stdout_path.unlink(missing_ok=True)
+        attempt_stderr_path.unlink(missing_ok=True)
+        attempt_stdout = ""
+        attempt_stderr = ""
         try:
-            completed = subprocess.run(
-                command,
-                cwd=cwd,
-                input=prompt_text,
-                text=True,
-                capture_output=True,
-                check=False,
-                timeout=timeout_sec,
-            )
+            with attempt_stdout_path.open(
+                "w", encoding="utf-8"
+            ) as stdout_handle, attempt_stderr_path.open(
+                "w", encoding="utf-8"
+            ) as stderr_handle:
+                completed = subprocess.run(
+                    command,
+                    cwd=cwd,
+                    input=prompt_text,
+                    text=True,
+                    stdout=stdout_handle,
+                    stderr=stderr_handle,
+                    check=False,
+                    timeout=timeout_sec,
+                )
+            attempt_stdout = _read_text_file(attempt_stdout_path)
+            attempt_stderr = _read_text_file(attempt_stderr_path)
         except FileNotFoundError as exc:
             raise CodexExecError("codex CLI not found in PATH") from exc
         except subprocess.TimeoutExpired as exc:
             last_timeout = exc
-            stdout_attempts.append((attempt, _to_text(exc.stdout)))
-            stderr_attempts.append((attempt, _to_text(exc.stderr)))
+            attempt_stdout = _read_text_file(attempt_stdout_path) or _to_text(exc.stdout)
+            attempt_stderr = _read_text_file(attempt_stderr_path) or _to_text(exc.stderr)
+            stdout_attempts.append((attempt, attempt_stdout))
+            stderr_attempts.append((attempt, attempt_stderr))
+            attempt_stdout_path.unlink(missing_ok=True)
+            attempt_stderr_path.unlink(missing_ok=True)
             if attempt < max_attempts:
                 _debug_log(
                     f"attempt={attempt} timed out after {timeout_sec}s; retrying in "
@@ -152,9 +202,24 @@ def run_codex_exec(
                 continue
             break
 
-        stdout_attempts.append((attempt, completed.stdout or ""))
-        stderr_attempts.append((attempt, completed.stderr or ""))
+        attempt_stdout_path.unlink(missing_ok=True)
+        attempt_stderr_path.unlink(missing_ok=True)
+
+        stdout_attempts.append((attempt, attempt_stdout))
+        stderr_attempts.append((attempt, attempt_stderr))
         _debug_log(f"attempt={attempt} return_code={completed.returncode}")
+
+        # Fallback: some codex CLI/sandbox combinations skip output-last-message
+        # file creation even when stdout JSONL contains a valid agent_message.
+        if completed.returncode == 0 and not output_file.exists():
+            fallback_message = _extract_last_agent_message_from_jsonl(
+                attempt_stdout
+            )
+            if fallback_message:
+                output_file.write_text(fallback_message + "\n", encoding="utf-8")
+                _debug_log(
+                    f"attempt={attempt} output file synthesized from stdout JSONL"
+                )
 
         if completed.returncode == 0 and output_file.exists():
             break

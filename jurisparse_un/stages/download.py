@@ -7,6 +7,7 @@ import time
 from typing import Any, Sequence
 
 from jurisparse_un.models.ids import make_artifact_id
+from jurisparse_un.storage.contracts import build_artifact_object_path
 from jurisparse_un.stages._shared import (
     HTTPRequester,
     MonotonicFn,
@@ -90,6 +91,11 @@ def run(
             if artifact_sha256 and doc_version_id
             else None
         )
+        gcs_metadata = _build_gcs_metadata(
+            item=item,
+            kind=kind,
+            artifact_sha256=artifact_sha256,
+        )
         downloaded_items.append(
             {
                 "doc_version_id": doc_version_id or None,
@@ -97,6 +103,7 @@ def run(
                 "kind": kind,
                 "artifact_sha256": artifact_sha256,
                 "artifact_id": artifact_id,
+                **gcs_metadata,
                 "attempts": execution.attempts if execution else 0,
                 "retry_backoff": execution.backoff_sleeps if execution else [],
                 "rate_limit_wait": execution.rate_limit_sleeps if execution else [],
@@ -121,3 +128,54 @@ def _format_to_kind(format_name: str) -> str:
     if normalized in {"pdf", "docx", "html"}:
         return normalized
     return "binary"
+
+
+def _build_gcs_metadata(
+    *,
+    item: dict[str, Any],
+    kind: str,
+    artifact_sha256: str | None,
+) -> dict[str, str | None]:
+    if artifact_sha256 is None:
+        return {
+            "storage_backend": None,
+            "gcs_bucket": None,
+            "gcs_object_path": None,
+            "gcs_uri": None,
+        }
+
+    provider = _token_or_default(item.get("provider"), default="tbinternet")
+    doc_symbol = _token_or_default(item.get("doc_symbol"), default="unknown-doc")
+    language = _token_or_default(item.get("language"), default="en")
+    extension = _artifact_extension(item=item, kind=kind)
+    gcs_object_path = build_artifact_object_path(
+        provider,
+        doc_symbol,
+        language,
+        kind,
+        artifact_sha256,
+        extension,
+    )
+    gcs_bucket = _token_or_default(item.get("gcs_bucket"), default="jurisparse-artifacts")
+    return {
+        "storage_backend": "gcs",
+        "gcs_bucket": gcs_bucket,
+        "gcs_object_path": gcs_object_path,
+        "gcs_uri": f"gs://{gcs_bucket}/{gcs_object_path}",
+    }
+
+
+def _artifact_extension(*, item: dict[str, Any], kind: str) -> str:
+    extension = _token_or_default(item.get("extension"), default="").lstrip(".")
+    if extension:
+        return extension
+    if kind in {"pdf", "docx", "html"}:
+        return kind
+    return "bin"
+
+
+def _token_or_default(value: Any, *, default: str) -> str:
+    if value is None:
+        return default
+    text = str(value).strip().lower()
+    return text if text else default

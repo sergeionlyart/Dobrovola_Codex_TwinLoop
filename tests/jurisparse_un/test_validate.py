@@ -61,6 +61,17 @@ def test_validate_detects_segment_id_deterministic_violation() -> None:
     assert check["violation_count"] == 1
 
 
+def test_validate_detects_page_count_segment_count_mismatch() -> None:
+    inputs = _valid_inputs()
+    inputs["document_versions"][0]["page_count"] = 3
+
+    payload = run(**inputs)
+    check = _check(payload, "document_versions_page_count_matches_segments")
+
+    assert check["ok"] is False
+    assert check["violation_count"] == 1
+
+
 def _check(payload: dict[str, Any], invariant_id: str) -> dict[str, Any]:
     for check in payload["checks"]:
         if check["id"] == invariant_id:
@@ -85,6 +96,7 @@ def _valid_inputs() -> dict[str, list[dict[str, Any]]]:
         "doc_version_id": "docv-1",
         "doc_id": "doc-1",
         "content_sha256": "content-sha-1",
+        "page_count": 1,
         "extraction_quality": {"needs_ocr": False},
     }
     artifact = {"_id": "artifact-1", "artifact_id": "artifact-1", "sha256": "artifact-sha-1"}

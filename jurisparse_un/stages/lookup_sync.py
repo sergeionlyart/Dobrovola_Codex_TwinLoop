@@ -7,7 +7,7 @@ import hashlib
 from html.parser import HTMLParser
 from typing import Any, Iterable
 
-from jurisparse_un.stages._shared import make_stage_payload
+from jurisparse_un.stages._shared import HTTPRequester, default_http_get, make_stage_payload
 
 required_treaty_labels = frozenset({"CCPR", "CAT", "CEDAW", "CRPD"})
 required_doc_type_labels = frozenset(
@@ -18,6 +18,8 @@ required_doc_type_labels = frozenset(
         "Working methods",
     }
 )
+DEFAULT_TBSEARCH_URL = "https://juris.ohchr.org/tbsearch"
+DEFAULT_TIMEOUT_SEC = 10.0
 
 
 @dataclass(frozen=True)
@@ -211,6 +213,9 @@ def run(
     from_manifest: str | None = None,
     from_db: bool = False,
     tbsearch_html: str | None = None,
+    tbsearch_url: str = DEFAULT_TBSEARCH_URL,
+    timeout_sec: float = DEFAULT_TIMEOUT_SEC,
+    request_fn: HTTPRequester | None = None,
 ) -> dict[str, Any]:
     notes = [
         "lookup_sync parses TBSearch labels dynamically from source HTML.",
@@ -225,21 +230,29 @@ def run(
         from_db=from_db,
         notes=notes,
     )
+    fetch_url = tbsearch_url.strip() or DEFAULT_TBSEARCH_URL
+    html_source = "inline"
     if tbsearch_html is None:
-        payload["tb_lookups"] = {
-            "provider": "tbinternet",
-            "language": "EN",
-            "html_sha256": None,
-            "lookups": parse_tbsearch_lookups(""),
-        }
-        return payload
+        fetch = request_fn or default_http_get
+        response = fetch(url=fetch_url, timeout_sec=timeout_sec)
+        if response.status_code >= 400:
+            raise ValueError(
+                f"TBSearch fetch failed: status_code={response.status_code} url={fetch_url}"
+            )
+        tbsearch_html = response.content.decode("utf-8", errors="replace")
+        html_source = "live_fetch"
 
     lookups = parse_tbsearch_lookups(tbsearch_html)
     validate_required_labels(lookups)
     payload["tb_lookups"] = {
         "provider": "tbinternet",
         "language": "EN",
+        "tbsearch_url": fetch_url,
         "html_sha256": hashlib.sha256(tbsearch_html.encode("utf-8")).hexdigest(),
         "lookups": lookups,
+    }
+    payload["tbsearch_fetch"] = {
+        "source": html_source,
+        "timeout_sec": timeout_sec,
     }
     return payload

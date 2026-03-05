@@ -4,6 +4,11 @@ from __future__ import annotations
 
 import re
 
+try:
+    from google.cloud import storage
+except ModuleNotFoundError:  # pragma: no cover - optional runtime dependency
+    storage = None
+
 _PATH_TOKEN_RE = re.compile(r"[^a-z0-9]+")
 ARTIFACT_OBJECT_PATH_TEMPLATE = (
     "artifacts/{provider}/{doc_symbol}/{language}/{kind}/{sha256}.{ext}"
@@ -50,3 +55,8 @@ def build_artifact_object_path(
         sha256=_normalize_sha256(sha256),
         ext=_normalize_extension(extension),
     )
+
+
+def has_gcs_runtime() -> bool:
+    """Expose whether google-cloud-storage runtime integration is available."""
+    return storage is not None

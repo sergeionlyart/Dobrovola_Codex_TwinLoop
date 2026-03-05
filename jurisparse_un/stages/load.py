@@ -77,6 +77,7 @@ def load_stage_payload(
     db_state: MutableMapping[str, list[CoreRow]] | None = None,
 ) -> dict[str, Any]:
     state = _coerce_db_state(db_state)
+    version_rows = document_versions or []
 
     stats = {
         "documents_upserted": _upsert_many(
@@ -86,7 +87,7 @@ def load_stage_payload(
             collection_name="documents",
         ),
         "document_versions_upserted": _upsert_many(
-            rows=document_versions or [],
+            rows=version_rows,
             collection=state["document_versions"],
             filter_builder=_document_version_filter,
             collection_name="document_versions",
@@ -110,6 +111,10 @@ def load_stage_payload(
             collection_name="source_items",
         ),
     }
+    stats["documents_current_version_updated"] = _update_documents_current_version(
+        documents_collection=state["documents"],
+        document_versions=version_rows,
+    )
 
     state["ingest_runs"].append({"run_id": run_id})
     stats["ingest_runs_inserted"] = 1
@@ -175,6 +180,34 @@ def upsert_one(
 
     collection.append(row)
     return True
+
+
+def _update_documents_current_version(
+    *,
+    documents_collection: CollectionStore,
+    document_versions: Sequence[Mapping[str, Any]],
+) -> int:
+    latest_doc_versions: dict[str, str] = {}
+    for row in document_versions:
+        doc_id = _coerce_str(row.get("doc_id"))
+        doc_version_id = _coerce_str(row.get("doc_version_id") or row.get("_id"))
+        if doc_id and doc_version_id:
+            latest_doc_versions[doc_id] = doc_version_id
+
+    updated_count = 0
+    for doc_id, doc_version_id in latest_doc_versions.items():
+        for index, existing in enumerate(documents_collection):
+            existing_doc_id = _coerce_str(existing.get("doc_id") or existing.get("_id"))
+            if existing_doc_id != doc_id:
+                continue
+            if _coerce_str(existing.get("current_version_id")) == doc_version_id:
+                break
+            updated = dict(existing)
+            updated["current_version_id"] = doc_version_id
+            documents_collection[index] = updated
+            updated_count += 1
+            break
+    return updated_count
 
 
 def _matches_filter(row: Mapping[str, Any], filter_query: Mapping[str, Any]) -> bool:

@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 from pathlib import Path
-from collections.abc import Mapping, MutableMapping, Sequence
+from collections.abc import Callable, Mapping, MutableMapping, Sequence
 from typing import Any
 
 from jurisparse_un.models.ids import (
@@ -19,6 +19,7 @@ from jurisparse_un.stages._shared import make_stage_payload
 
 ManifestRow = Mapping[str, Any]
 CoreRow = dict[str, Any]
+GCSDownloadFn = Callable[[str], bytes]
 
 
 def run(
@@ -32,10 +33,14 @@ def run(
     db_state: MutableMapping[str, list[CoreRow]] | None = None,
     min_total_chars: int = 1000,
     max_empty_page_ratio: float = 0.5,
+    local_cache_dir: str | None = None,
+    allow_gcs_download: bool = False,
+    gcs_download_fn: GCSDownloadFn | None = None,
 ) -> dict[str, Any]:
     notes = [
         "reprocess runs from manifest/cache and does not require live network.",
         "Flow is manifest -> extract -> segment -> load, with deterministic IDs.",
+        "Artifact bytes are fetched from local_cache_dir first, then optional gcs_uri.",
     ]
     payload = make_stage_payload(
         stage="reprocess",
@@ -48,7 +53,12 @@ def run(
     )
 
     manifest = _load_manifest_rows(from_manifest=from_manifest, manifest_rows=manifest_rows)
-    extract_items, load_context = _prepare_manifest_inputs(manifest)
+    extract_items, load_context = _prepare_manifest_inputs(
+        manifest,
+        local_cache_dir=local_cache_dir,
+        allow_gcs_download=allow_gcs_download,
+        gcs_download_fn=gcs_download_fn,
+    )
     extracted_items = extract.extract_source_items(
         extract_items=extract_items,
         min_total_chars=min_total_chars,
@@ -110,6 +120,10 @@ def _load_manifest_rows(
 
 def _prepare_manifest_inputs(
     manifest_rows: Sequence[ManifestRow],
+    *,
+    local_cache_dir: str | None,
+    allow_gcs_download: bool,
+    gcs_download_fn: GCSDownloadFn | None,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     extract_items: list[dict[str, Any]] = []
     load_context: list[dict[str, Any]] = []
@@ -119,7 +133,13 @@ def _prepare_manifest_inputs(
         doc_symbol = _token_or_default(row.get("doc_symbol"), default=f"manifest-doc-{index + 1}")
         language = _token_or_default(row.get("language"), default="en")
 
-        pages = _manifest_pages(row)
+        artifact_bytes, artifact_fetch_source = _fetch_artifact_bytes(
+            row=row,
+            local_cache_dir=local_cache_dir,
+            allow_gcs_download=allow_gcs_download,
+            gcs_download_fn=gcs_download_fn,
+        )
+        pages = _manifest_pages(row, artifact_bytes=artifact_bytes)
         content_sha256 = _content_sha256(row=row, pages=pages)
         doc_id = _token_or_default(
             row.get("doc_id"),
@@ -164,6 +184,7 @@ def _prepare_manifest_inputs(
                 "download_page_url": download_page_url,
                 "selected_format": _token_or_default(row.get("selected_format"), default="pdf"),
                 "gcs_uri": _token_or_default(row.get("gcs_uri"), default=""),
+                "artifact_fetch_source": artifact_fetch_source,
             }
         )
     return extract_items, load_context
@@ -217,6 +238,10 @@ def _prepare_load_rows(
                 "sha256": _token_or_default(row.get("content_sha256"), default=""),
                 "kind": _token_or_default(row.get("selected_format"), default="pdf"),
                 "gcs_uri": _token_or_default(row.get("gcs_uri"), default=""),
+                "artifact_fetch_source": _token_or_default(
+                    row.get("artifact_fetch_source"),
+                    default="manifest",
+                ),
             }
         )
         source_items.append(
@@ -246,15 +271,111 @@ def _content_sha256(*, row: ManifestRow, pages: Sequence[str]) -> str:
     return hashlib.sha256(joined.encode("utf-8")).hexdigest()
 
 
-def _manifest_pages(row: ManifestRow) -> list[str]:
+def _manifest_pages(
+    row: ManifestRow,
+    *,
+    artifact_bytes: bytes | None = None,
+) -> list[str]:
     for field_name in ("pdf_pages", "pages", "text_pages"):
         candidate = row.get(field_name)
         if isinstance(candidate, Sequence) and not isinstance(candidate, (str, bytes)):
             return ["" if value is None else str(value) for value in candidate]
     text = row.get("text")
-    if text is None:
+    if text is not None:
+        return [str(text)]
+
+    if artifact_bytes is None:
         return []
-    return [str(text)]
+
+    decoded = artifact_bytes.decode("utf-8", errors="replace").strip()
+    if not decoded:
+        return []
+    return [decoded]
+
+
+def _fetch_artifact_bytes(
+    *,
+    row: ManifestRow,
+    local_cache_dir: str | None,
+    allow_gcs_download: bool,
+    gcs_download_fn: GCSDownloadFn | None,
+) -> tuple[bytes | None, str]:
+    inline_bytes = _coerce_bytes(row.get("content_bytes"))
+    if inline_bytes is None:
+        inline_bytes = _coerce_bytes(row.get("artifact_bytes"))
+    if inline_bytes is not None:
+        return inline_bytes, "inline"
+
+    gcs_uri = _token_or_default(row.get("gcs_uri"), default="")
+    cache_path = _cache_path_for_row(row=row, gcs_uri=gcs_uri, local_cache_dir=local_cache_dir)
+    if cache_path is not None and cache_path.is_file():
+        return cache_path.read_bytes(), "cache"
+
+    if gcs_uri and allow_gcs_download:
+        download = gcs_download_fn or download_as_bytes
+        return download(gcs_uri), "gcs"
+
+    return None, "manifest"
+
+
+def _cache_path_for_row(
+    *,
+    row: ManifestRow,
+    gcs_uri: str,
+    local_cache_dir: str | None,
+) -> Path | None:
+    explicit_path = _token_or_default(row.get("local_cache_path"), default="")
+    if explicit_path:
+        return Path(explicit_path)
+
+    if local_cache_dir is None:
+        return None
+
+    parsed_uri = _parse_gcs_uri(gcs_uri)
+    if parsed_uri is None:
+        return None
+
+    _, object_path = parsed_uri
+    return Path(local_cache_dir) / object_path
+
+
+def _parse_gcs_uri(gcs_uri: str) -> tuple[str, str] | None:
+    if not gcs_uri.startswith("gs://"):
+        return None
+    suffix = gcs_uri[5:].strip()
+    if "/" not in suffix:
+        return None
+    bucket_name, object_path = suffix.split("/", 1)
+    bucket_name = bucket_name.strip()
+    object_path = object_path.strip()
+    if not bucket_name or not object_path:
+        return None
+    return bucket_name, object_path
+
+
+def download_as_bytes(gcs_uri: str) -> bytes:
+    parsed_uri = _parse_gcs_uri(gcs_uri)
+    if parsed_uri is None:
+        raise ValueError("gcs_uri must be in gs://bucket/object format")
+
+    bucket_name, object_path = parsed_uri
+    try:
+        from google.cloud import storage
+    except ModuleNotFoundError as exc:
+        raise RuntimeError("google-cloud-storage package is required for gcs_uri fetch") from exc
+
+    client = storage.Client()
+    bucket = client.bucket(bucket_name)
+    blob = bucket.blob(object_path)
+    return blob.download_as_bytes()
+
+
+def _coerce_bytes(value: Any) -> bytes | None:
+    if isinstance(value, bytes):
+        return value
+    if isinstance(value, str):
+        return value.encode("utf-8")
+    return None
 
 
 def _token_or_default(value: Any, *, default: str) -> str:

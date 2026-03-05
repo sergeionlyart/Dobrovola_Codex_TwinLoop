@@ -71,3 +71,51 @@ def test_load_deduplicates_entities_by_upsert_keys() -> None:
 
     source_item = second_payload["db_state"]["source_items"][0]
     assert source_item["_id"] == "source-item-1"
+    assert second_payload["db_state"]["documents"][0]["current_version_id"] == "docv-1"
+
+
+def test_load_updates_documents_current_version_id_for_latest_version() -> None:
+    db_state: dict[str, list[dict[str, str]]] = {}
+
+    first_payload = run(
+        run_id="RUN-1",
+        db_state=db_state,
+        documents=[
+            {
+                "_id": "doc-1",
+                "doc_id": "doc-1",
+                "doc_key": "tbinternet|ccpr/c/1/d/2/2024|en",
+            }
+        ],
+        document_versions=[
+            {
+                "_id": "docv-1",
+                "doc_version_id": "docv-1",
+                "doc_id": "doc-1",
+                "content_sha256": "sha-1",
+            }
+        ],
+    )
+    assert first_payload["db_state"]["documents"][0]["current_version_id"] == "docv-1"
+
+    second_payload = run(
+        run_id="RUN-2",
+        db_state=db_state,
+        documents=[
+            {
+                "_id": "doc-1",
+                "doc_id": "doc-1",
+                "doc_key": "tbinternet|ccpr/c/1/d/2/2024|en",
+            }
+        ],
+        document_versions=[
+            {
+                "_id": "docv-2",
+                "doc_version_id": "docv-2",
+                "doc_id": "doc-1",
+                "content_sha256": "sha-2",
+            }
+        ],
+    )
+
+    assert second_payload["db_state"]["documents"][0]["current_version_id"] == "docv-2"

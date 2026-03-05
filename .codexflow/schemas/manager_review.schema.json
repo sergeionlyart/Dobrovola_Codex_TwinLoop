@@ -1,0 +1,66 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ManagerReview",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "task_id",
+    "verdict",
+    "rationale",
+    "required_changes",
+    "next_task_suggestion",
+    "artifact_checks",
+    "full_techspec_complete",
+    "approval_required",
+    "created_at"
+  ],
+  "properties": {
+    "task_id": {
+      "type": "string",
+      "pattern": "^TSK-[0-9]{4}$"
+    },
+    "verdict": {
+      "type": "string",
+      "enum": [
+        "ACCEPT",
+        "REWORK",
+        "NEEDS_HUMAN_APPROVAL",
+        "STOP"
+      ]
+    },
+    "rationale": {
+      "type": "string",
+      "minLength": 1
+    },
+    "required_changes": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "next_task_suggestion": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "artifact_checks": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "full_techspec_complete": {
+      "type": "boolean"
+    },
+    "approval_required": {
+      "type": "boolean"
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time"
+    }
+  }
+}

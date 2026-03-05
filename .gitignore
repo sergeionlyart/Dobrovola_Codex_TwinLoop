@@ -1,0 +1,19 @@
+# CodexFlow runtime artifacts (must not be tracked)
+.codexflow/state.json
+.codexflow/plan.json
+.codexflow/plan.md
+.codexflow/tasks/
+.codexflow/reports/
+.codexflow/approvals/
+.codexflow/_tmp/
+.codexflow/_archive/
+.codexflow/**/logs/
+.codexflow/**/*.marker
+.codexflow/lock
+.codexflow/*.jsonl
+.env
+.DS_Store
+__pycache__/
+*.pyc
+legal-un-*.json
+docs/codexflow_preflight_report.md

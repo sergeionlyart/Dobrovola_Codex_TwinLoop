@@ -1,0 +1,51 @@
+{
+  "task_id": "TSK-0001",
+  "status": "DONE",
+  "branch": "codex/TSK-0001-bootstrap-codexflow",
+  "commits": [
+    {
+      "sha": "1a2b3c4",
+      "message": "chore(codexflow): bootstrap variant A scaffold for TSK-0001"
+    }
+  ],
+  "changed_files": [
+    "codexflow/dispatcher.py",
+    ".codexflow/schemas/worker_report.schema.json"
+  ],
+  "commands_run": [
+    {
+      "cmd": "python -m compileall scripts",
+      "exit_code": 0,
+      "notes": "Compiled successfully"
+    },
+    {
+      "cmd": "pytest",
+      "exit_code": 0,
+      "notes": "All tests passed"
+    }
+  ],
+  "tests": [
+    {
+      "name": "compileall",
+      "status": "PASS",
+      "notes": "No SyntaxError in scripts"
+    },
+    {
+      "name": "pytest",
+      "status": "PASS",
+      "notes": "No failing tests"
+    }
+  ],
+  "summary": "CodexFlow bootstrap completed with dispatcher, schemas, and runbook updates.",
+  "risks_or_notes": [
+    "No parser ingest logic was modified."
+  ],
+  "artifacts": {
+    "report_json": ".codexflow/reports/TSK-0001/report.json",
+    "report_md": ".codexflow/reports/TSK-0001/report.md",
+    "worker_log": ".codexflow/reports/TSK-0001/logs/worker.jsonl",
+    "worker_stderr": ".codexflow/reports/TSK-0001/logs/worker.stderr.txt",
+    "worker_evidence": ".codexflow/reports/TSK-0001/evidence.json"
+  },
+  "created_at": "2026-02-24T12:30:00Z"
+}

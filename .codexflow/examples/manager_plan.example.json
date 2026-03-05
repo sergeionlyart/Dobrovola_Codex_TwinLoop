@@ -1,0 +1,58 @@
+{
+  "run_id": "RUN-2026-02-25-001",
+  "spec_path": "docs/TECH_SPEC.md",
+  "assumptions": [
+    "The first planning step must be a single rolling task with task_id TSK-0001.",
+    "TechSpec invariants must be stated explicitly in both DoD and quality gates."
+  ],
+  "tasks": [
+    {
+      "task_id": "TSK-0001",
+      "title": "Bootstrap JurisParse MVP-1 Product Scaffolding",
+      "objective": "Create first product deliverable scaffold toward TECH_SPEC MVP-1 (package skeleton, CLI command surface, config skeleton, test manifest, README run instructions).",
+      "scope_in": [
+        "Add/extend JurisParse package scaffold and CLI entrypoint",
+        "Add config.example.yaml and tests/data/test_manifest.jsonl placeholders",
+        "Document local run steps in README"
+      ],
+      "scope_out": [
+        "End-to-end production ingest implementation against real Mongo/GCS"
+      ],
+      "dod": [
+        "cmd_plan accepts only one task and one ordering item, both equal to TSK-0001.",
+        "DoD explicitly states page_index remains 1-based (first page = 1).",
+        "DoD explicitly states idempotency: rerun on identical inputs creates no duplicate entities except ingest_runs.",
+        "DoD explicitly states lookup_sync resolves dynamic TBSearch IDs and does not use hardcoded TreatyID/DocTypeID values.",
+        "DoD explicitly states that when needs_ocr=true in MVP-1, segments are not created."
+      ],
+      "quality_gates": [
+        "Gate: manager-plan validation rejects plans that do not explicitly assert page_index is 1-based.",
+        "Gate: manager-plan validation rejects plans that do not explicitly assert idempotency with no duplicates except ingest_runs.",
+        "Gate: manager-plan validation rejects plans that do not explicitly assert lookup_sync without hardcoded IDs.",
+        "Gate: manager-plan validation rejects plans that do not explicitly assert needs_ocr=true means no segments in MVP-1.",
+        "pytest -q tests/codexflow/test_rolling_single_task.py tests/codexflow/test_schema_contracts.py",
+        "pytest -q",
+        "ruff check ."
+      ],
+      "required_commands": [
+        "ruff check .",
+        "pytest -q tests/codexflow/test_rolling_single_task.py tests/codexflow/test_schema_contracts.py",
+        "pytest -q"
+      ],
+      "touched_areas": [
+        "codexflow/dispatcher.py",
+        ".codexflow/prompts/manager_plan.md",
+        ".codexflow/examples/manager_plan.example.json",
+        "tests/codexflow/test_rolling_single_task.py",
+        "tests/codexflow/test_schema_contracts.py"
+      ],
+      "risk": "medium",
+      "approval_required": false,
+      "depends_on": []
+    }
+  ],
+  "ordering": [
+    "TSK-0001"
+  ],
+  "created_at": "2026-02-24T12:00:00Z"
+}

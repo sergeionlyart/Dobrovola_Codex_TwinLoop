@@ -1,0 +1,27 @@
+run:
+  provider: tbinternet
+  default_language: en
+
+mongo:
+  uri: mongodb://localhost:27017
+  database: jurisparse_un
+
+storage:
+  bucket: gs://example-jurisparse-mvp1
+  prefix: jurisparse
+
+sources:
+  tbinternet:
+    tbsearch_url: https://example.invalid/tbsearch
+
+scope:
+  committees:
+    - CCPR
+    - CAT
+  doc_types:
+    - Jurisprudence
+    - General Comment/recommendation
+
+segmentation:
+  page_index_base: 1
+  needs_ocr_skip_segments: true

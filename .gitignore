@@ -1,3 +1,16 @@
+# Secrets and local environment
+.env
+.env.*
+!.env.example
+
+# OS/editor/python cache
+.DS_Store
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
 # CodexFlow runtime artifacts (must not be tracked)
 .codexflow/state.json
 .codexflow/plan.json
@@ -8,12 +21,14 @@
 .codexflow/_tmp/
 .codexflow/_archive/
 .codexflow/**/logs/
+.codexflow/**/*.jsonl
 .codexflow/**/*.marker
+.codexflow/**/*.pid
+.codexflow/**/*.log
 .codexflow/lock
-.codexflow/*.jsonl
-.env
-.DS_Store
-__pycache__/
-*.pyc
-legal-un-*.json
+
+# Generated local outputs
+reports/
+docs/reports/
 docs/codexflow_preflight_report.md
+legal-un-*.json

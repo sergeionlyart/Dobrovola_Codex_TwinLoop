@@ -17,6 +17,11 @@ REQUIRED_STAGE_COMMANDS = (
     "reprocess",
 )
 
+REQUIRED_CLI_COMMANDS = REQUIRED_STAGE_COMMANDS + (
+    "ingest",
+    "export-manifest",
+)
+
 PACKAGE_CANDIDATES = (
     "jurisparse_un",
     "src/jurisparse_un",
@@ -79,6 +84,29 @@ REQUIRED_LOOKUP_FIXTURES = (
     "tests/fixtures/lookup_sync_tbsearch_missing_required_label.html",
 )
 
+REQUIRED_MANIFEST_FIELDS = (
+    "provider",
+    "doc_symbol",
+    "language",
+    "doc_id",
+    "doc_version_id",
+    "download_page_url",
+    "selected_format",
+    "download_file_url",
+    "canonical_artifact_id",
+    "sha256",
+    "gcs_uri",
+    "retrieved_at",
+)
+
+REQUIRED_PACKAGING_FILES = (
+    "pyproject.toml",
+    "setup.py",
+    "setup.cfg",
+)
+
+MIN_TEST_MANIFEST_ROWS = 20
+
 TECHSPEC_COVERAGE_TARGET_PCT = 100.0
 
 
@@ -122,7 +150,7 @@ def _detect_cli_info(package_dir: Path | None, repo_root: Path) -> dict[str, Any
 
     found_subcommands: dict[str, bool] = {}
     missing_subcommands: list[str] = []
-    for command in REQUIRED_STAGE_COMMANDS:
+    for command in REQUIRED_CLI_COMMANDS:
         tokens = _subcommand_tokens(command)
         present = any(token.lower() in combined_text for token in tokens)
         found_subcommands[command] = present
@@ -130,6 +158,7 @@ def _detect_cli_info(package_dir: Path | None, repo_root: Path) -> dict[str, Any
             missing_subcommands.append(command)
 
     module_runnable = bool(package_dir and (package_dir / "__main__.py").is_file())
+    ingest_noop_pattern = "stage_results.append(runner(**_stage_kwargs(args)))" in combined_text
     cli_contract = {
         "ingest_command_present": _contains_any(
             combined_text,
@@ -138,6 +167,16 @@ def _detect_cli_info(package_dir: Path | None, repo_root: Path) -> dict[str, Any
                 "'ingest':",
                 "add_parser('ingest'",
                 'add_parser("ingest"',
+            ),
+        ),
+        "export_manifest_command_present": _contains_any(
+            combined_text,
+            (
+                "\"export-manifest\":",
+                "'export-manifest':",
+                "add_parser('export-manifest'",
+                'add_parser("export-manifest"',
+                "export_manifest",
             ),
         ),
         "from_manifest_option_present": _contains_any(
@@ -152,6 +191,39 @@ def _detect_cli_info(package_dir: Path | None, repo_root: Path) -> dict[str, Any
             combined_text,
             ("--dry-run", "dry_run"),
         ),
+        "validate_selector_options_present": _contains_all(
+            combined_text,
+            ("--run-id", "--doc-id", "--doc-version-id"),
+        ),
+        "operational_limits_options_present": _contains_all(
+            combined_text,
+            ("--max-docs", "--max-per-committee", "--rate-limit-rps", "--retries"),
+        ),
+        "log_json_option_present": _contains_any(
+            combined_text,
+            ("--log-json", "log_json"),
+        ),
+        "run_id_auto_generation_present": _contains_any(
+            combined_text,
+            ("uuid.uuid4", "uuid4("),
+        ),
+        "validate_non_zero_exit_contract_present": _contains_any(
+            combined_text,
+            ("payload.get(\"ok\")", "payload['ok']", "return 1 if", "if not payload.get(\"ok\")"),
+        ),
+        "ingest_pipeline_wiring_present": (
+            not ingest_noop_pattern
+            and _contains_any(
+                combined_text,
+                (
+                    "stage_context",
+                    "previous_payload",
+                    "next_inputs",
+                    "stage_outputs",
+                ),
+            )
+        ),
+        "ingest_noop_pattern_present": ingest_noop_pattern,
     }
 
     return {
@@ -164,9 +236,32 @@ def _detect_cli_info(package_dir: Path | None, repo_root: Path) -> dict[str, Any
     }
 
 
-def _manifest_has_rows(path: Path) -> bool:
-    text = _read_text(path)
-    return any(line.strip() for line in text.splitlines())
+def _manifest_rows(path: Path) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for raw_line in _read_text(path).splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        try:
+            parsed = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(parsed, dict):
+            rows.append(parsed)
+    return rows
+
+
+def _manifest_missing_required_fields(
+    rows: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    missing_by_row: list[dict[str, Any]] = []
+    required = set(REQUIRED_MANIFEST_FIELDS)
+    for idx, row in enumerate(rows, start=1):
+        present = {str(key) for key in row.keys()}
+        missing = sorted(required - present)
+        if missing:
+            missing_by_row.append({"row": idx, "missing_fields": missing})
+    return missing_by_row
 
 
 def _detect_stage_implementations(
@@ -228,6 +323,7 @@ def _detect_ids_capability(package_dir: Path | None, repo_root: Path) -> dict[st
             "page_index_guard": False,
             "uuidv5_formula_present": False,
             "source_item_sha1_formula_present": False,
+            "artifact_id_sha_only_formula_present": False,
             "text": "",
         }
 
@@ -240,6 +336,7 @@ def _detect_ids_capability(package_dir: Path | None, repo_root: Path) -> dict[st
             "page_index_guard": False,
             "uuidv5_formula_present": False,
             "source_item_sha1_formula_present": False,
+            "artifact_id_sha_only_formula_present": False,
             "text": "",
         }
 
@@ -271,6 +368,13 @@ def _detect_ids_capability(package_dir: Path | None, repo_root: Path) -> dict[st
             "download_page_url",
         ),
     )
+    artifact_id_sha_only_formula_present = _contains_all(
+        text,
+        (
+            "def make_artifact_id",
+            "seed = f\"artifact|{content_sha256_norm}\"",
+        ),
+    )
 
     ok = not missing_functions and page_index_guard
     return {
@@ -280,6 +384,7 @@ def _detect_ids_capability(package_dir: Path | None, repo_root: Path) -> dict[st
         "page_index_guard": page_index_guard,
         "uuidv5_formula_present": uuidv5_formula_present,
         "source_item_sha1_formula_present": source_item_sha1_formula_present,
+        "artifact_id_sha_only_formula_present": artifact_id_sha_only_formula_present,
         "text": text,
     }
 
@@ -308,6 +413,18 @@ def _detect_stage_contracts(
                     "required_doc_type_labels",
                 ),
             )
+        },
+        "lookup_sync_live_fetch_present": {
+            "ok": _contains_any(
+                lookup_text,
+                (
+                    "urlopen(",
+                    "request_fn",
+                    "default_http_get",
+                    "tbsearch_url",
+                ),
+            )
+            and "parse_tbsearch_lookups(\"\")" not in lookup_text,
         },
         "lookup_sync_no_hardcoded_ids": {
             "ok": not _contains_any(
@@ -351,6 +468,12 @@ def _detect_stage_contracts(
                 ("hashlib.sha256", "make_artifact_id", "_format_to_kind"),
             )
         },
+        "download_gcs_uri_present": {
+            "ok": _contains_all(
+                download_text,
+                ("gcs_uri", "build_artifact_object_path"),
+            ),
+        },
         "download_retry_backoff_rate_limit": {
             "ok": _contains_all(
                 download_text,
@@ -378,6 +501,19 @@ def _detect_stage_contracts(
                 extract_text,
                 ("needs_ocr", "docs_needs_ocr"),
             )
+        },
+        "extract_docx_html_strategy_present": {
+            "ok": _contains_any(
+                extract_text + "\n" + segment_text,
+                (
+                    "converted_pdf",
+                    "pseudo_page",
+                    "segment_type = \"pseudo_page\"",
+                    "segment_type\": \"pseudo_page\"",
+                    "docx",
+                    "html",
+                ),
+            ),
         },
         "segment_page_index_deterministic_present": {
             "ok": _contains_all(
@@ -415,6 +551,12 @@ def _detect_stage_contracts(
         "validate_invariants_catalog_present": {
             "ok": _contains_all(validate_text, REQUIRED_VALIDATE_CHECK_IDS),
         },
+        "validate_page_count_invariant_present": {
+            "ok": _contains_all(
+                validate_text,
+                ("page_count", "segment_count"),
+            ),
+        },
         "reprocess_manifest_pipeline_present": {
             "ok": _contains_all(
                 reprocess_text,
@@ -425,6 +567,24 @@ def _detect_stage_contracts(
                     "load.load_stage_payload",
                 ),
             )
+        },
+        "reprocess_gcs_cache_fetch_present": {
+            "ok": _contains_any(
+                reprocess_text,
+                ("local_cache_dir", "read_bytes(", "download_as_bytes", "open("),
+            )
+            and "gcs_uri" in reprocess_text,
+        },
+        "errors_collection_write_present": {
+            "ok": _contains_any(
+                crawl_text + "\n" + resolve_text + "\n" + download_text + "\n" + load_text,
+                (
+                    "errors",
+                    "error_type",
+                    "traceback",
+                    "retryable",
+                ),
+            ),
         },
     }
 
@@ -464,6 +624,76 @@ def _detect_data_layer_contracts(repo_root: Path) -> dict[str, dict[str, Any]]:
         "text_normalization_rules_present": {
             "ok": normalize_rules_ok,
             "path": str(normalize_path.relative_to(repo_root)),
+        },
+    }
+
+
+def _detect_runtime_integrations(
+    *,
+    package_dir: Path | None,
+    stage_checks: dict[str, dict[str, Any]],
+    repo_root: Path,
+) -> dict[str, dict[str, Any]]:
+    package_text = ""
+    if package_dir and package_dir.is_dir():
+        snippets: list[str] = []
+        for path in package_dir.rglob("*.py"):
+            snippets.append(_read_text(path))
+        package_text = "\n".join(snippets)
+
+    download_text = stage_checks["download"].get("text", "")
+    reprocess_text = stage_checks["reprocess"].get("text", "")
+    load_text = stage_checks["load"].get("text", "")
+
+    packaging_candidates = [repo_root / name for name in REQUIRED_PACKAGING_FILES]
+    packaging_paths = [str(path.relative_to(repo_root)) for path in packaging_candidates]
+    packaging_present = any(path.is_file() for path in packaging_candidates)
+
+    return {
+        "packaging_metadata_present": {
+            "ok": packaging_present,
+            "paths": packaging_paths,
+        },
+        "mongo_runtime_integration_present": {
+            "ok": _contains_any(
+                package_text,
+                (
+                    "from pymongo",
+                    "import pymongo",
+                    "mongoclient(",
+                    "motor.motor_asyncio",
+                ),
+            ),
+        },
+        "gcs_runtime_integration_present": {
+            "ok": _contains_any(
+                package_text,
+                (
+                    "from google.cloud import storage",
+                    "import google.cloud.storage",
+                    "storage.client(",
+                    "bucket.blob(",
+                ),
+            ),
+        },
+        "download_writes_gcs_metadata_present": {
+            "ok": _contains_all(
+                download_text,
+                ("gcs_uri", "build_artifact_object_path"),
+            ),
+        },
+        "reprocess_fetches_from_gcs_or_cache_present": {
+            "ok": "gcs_uri" in reprocess_text
+            and _contains_any(
+                reprocess_text,
+                ("local_cache_dir", "read_bytes(", "download_as_bytes", "open("),
+            ),
+        },
+        "load_updates_current_version_present": {
+            "ok": _contains_any(
+                load_text,
+                ("current_version_id", "documents.current_version_id"),
+            ),
         },
     }
 
@@ -639,15 +869,30 @@ def evaluate_repo(repo_root: Path) -> dict[str, Any]:
 
     manifest_path = repo_root / "tests" / "data" / "test_manifest.jsonl"
     manifest_exists = manifest_path.is_file()
-    manifest_has_rows = manifest_exists and _manifest_has_rows(manifest_path)
+    manifest_rows = _manifest_rows(manifest_path) if manifest_exists else []
+    manifest_has_rows = len(manifest_rows) > 0
+    manifest_min_rows = len(manifest_rows) >= MIN_TEST_MANIFEST_ROWS
+    manifest_missing_fields = _manifest_missing_required_fields(manifest_rows)
+    manifest_schema_ok = len(manifest_missing_fields) == 0
     if not manifest_exists:
         missing.append("test_manifest: missing tests/data/test_manifest.jsonl")
     elif not manifest_has_rows:
         missing.append("test_manifest: tests/data/test_manifest.jsonl is empty")
+    elif not manifest_min_rows:
+        missing.append(
+            "test_manifest: expected at least "
+            + str(MIN_TEST_MANIFEST_ROWS)
+            + " rows"
+        )
+    if manifest_exists and not manifest_schema_ok:
+        missing.append("test_manifest: missing required manifest fields")
     checked["test_manifest"] = {
-        "ok": manifest_exists and manifest_has_rows,
+        "ok": manifest_exists and manifest_has_rows and manifest_min_rows and manifest_schema_ok,
         "path": str(manifest_path.relative_to(repo_root)),
         "has_rows": manifest_has_rows,
+        "row_count": len(manifest_rows),
+        "min_rows_required": MIN_TEST_MANIFEST_ROWS,
+        "missing_fields_by_row": manifest_missing_fields,
     }
 
     readme_path = repo_root / "README.md"
@@ -702,7 +947,7 @@ def evaluate_repo(repo_root: Path) -> dict[str, Any]:
         notes.append("Package directory exists but __init__.py is missing.")
     if cli_info["paths"] and cli_info["missing_subcommands"]:
         notes.append(
-            "CLI files found but required stage subcommand names were not all detected."
+            "CLI files found but required command names were not all detected."
         )
 
     stage_contracts = _detect_stage_contracts(stage_checks)
@@ -711,19 +956,31 @@ def evaluate_repo(repo_root: Path) -> dict[str, Any]:
     data_layer_contracts = _detect_data_layer_contracts(repo_root)
     checked["data_layer_contracts"] = data_layer_contracts
 
+    runtime_integrations = _detect_runtime_integrations(
+        package_dir=package_dir,
+        stage_checks=stage_checks,
+        repo_root=repo_root,
+    )
+    checked["runtime_integrations"] = runtime_integrations
+
     test_contracts = _detect_test_coverage_contracts(repo_root)
     checked["test_contracts"] = test_contracts
 
     requirements = [
         _requirement(
             requirement_id="cli_stage_surface_complete",
-            description="CLI exposes all required Stage 1 stage commands.",
+            description="CLI exposes all required Stage 1 commands (including ingest and export-manifest).",
             ok=cli_stage_ok,
         ),
         _requirement(
             requirement_id="cli_ingest_command_present",
             description="CLI includes end-to-end ingest command required by TECH_SPEC section 5.",
             ok=checked["cli"]["contract"]["ingest_command_present"],
+        ),
+        _requirement(
+            requirement_id="cli_export_manifest_command_present",
+            description="CLI includes export-manifest command.",
+            ok=checked["cli"]["contract"]["export_manifest_command_present"],
         ),
         _requirement(
             requirement_id="cli_from_manifest_option_present",
@@ -741,6 +998,39 @@ def evaluate_repo(repo_root: Path) -> dict[str, Any]:
             ok=checked["cli"]["contract"]["dry_run_option_present"],
         ),
         _requirement(
+            requirement_id="cli_validate_selector_options_present",
+            description="CLI includes validate selectors: --run-id, --doc-id, --doc-version-id.",
+            ok=checked["cli"]["contract"]["validate_selector_options_present"],
+        ),
+        _requirement(
+            requirement_id="cli_operational_limits_options_present",
+            description="CLI includes --max-docs, --max-per-committee, --rate-limit-rps, --retries options.",
+            ok=checked["cli"]["contract"]["operational_limits_options_present"],
+        ),
+        _requirement(
+            requirement_id="cli_log_json_option_present",
+            description="CLI includes --log-json structured logging option.",
+            ok=checked["cli"]["contract"]["log_json_option_present"],
+        ),
+        _requirement(
+            requirement_id="run_id_auto_generation_present",
+            description="CLI/stages include explicit UUIDv4 run_id generation when not provided.",
+            ok=checked["cli"]["contract"]["run_id_auto_generation_present"],
+        ),
+        _requirement(
+            requirement_id="validate_non_zero_exit_contract_present",
+            description="validate command returns non-zero exit code when invariants fail.",
+            ok=checked["cli"]["contract"]["validate_non_zero_exit_contract_present"],
+        ),
+        _requirement(
+            requirement_id="ingest_pipeline_wiring_present",
+            description="ingest command wires outputs between stages instead of isolated calls.",
+            ok=checked["cli"]["contract"]["ingest_pipeline_wiring_present"],
+            details={
+                "ingest_noop_pattern_present": checked["cli"]["contract"]["ingest_noop_pattern_present"],
+            },
+        ),
+        _requirement(
             requirement_id="config_skeleton_present",
             description="MVP-1 config skeleton exists.",
             ok=config_ok,
@@ -749,6 +1039,18 @@ def evaluate_repo(repo_root: Path) -> dict[str, Any]:
             requirement_id="manifest_fixture_present",
             description="tests/data/test_manifest.jsonl exists and is non-empty.",
             ok=manifest_exists and manifest_has_rows,
+        ),
+        _requirement(
+            requirement_id="manifest_fixture_min_rows_present",
+            description=f"tests/data/test_manifest.jsonl contains at least {MIN_TEST_MANIFEST_ROWS} rows.",
+            ok=manifest_min_rows,
+            details={"row_count": checked["test_manifest"]["row_count"]},
+        ),
+        _requirement(
+            requirement_id="manifest_schema_fields_present",
+            description="Manifest rows include required TechSpec fields.",
+            ok=manifest_schema_ok,
+            details={"missing_fields_by_row": checked["test_manifest"]["missing_fields_by_row"]},
         ),
         _requirement(
             requirement_id="tech_spec_present",
@@ -833,9 +1135,36 @@ def evaluate_repo(repo_root: Path) -> dict[str, Any]:
                 details={"path": ids_capability.get("path")},
             ),
             _requirement(
+                requirement_id="artifact_id_sha_only_formula_present",
+                description="artifact_id formula is UUIDv5 over sha256 only (TechSpec contract).",
+                ok=bool(ids_capability.get("artifact_id_sha_only_formula_present")),
+                details={"path": ids_capability.get("path")},
+            ),
+            _requirement(
+                requirement_id="packaging_metadata_present",
+                description="Packaging metadata exists (pyproject.toml/setup.py/setup.cfg) for installable CLI entrypoint.",
+                ok=runtime_integrations["packaging_metadata_present"]["ok"],
+                details={"paths": runtime_integrations["packaging_metadata_present"]["paths"]},
+            ),
+            _requirement(
+                requirement_id="mongo_runtime_integration_present",
+                description="Runtime code includes MongoDB integration markers (pymongo/motor).",
+                ok=runtime_integrations["mongo_runtime_integration_present"]["ok"],
+            ),
+            _requirement(
+                requirement_id="gcs_runtime_integration_present",
+                description="Runtime code includes Google Cloud Storage integration markers.",
+                ok=runtime_integrations["gcs_runtime_integration_present"]["ok"],
+            ),
+            _requirement(
                 requirement_id="lookup_sync_dynamic_labels_present",
                 description="lookup_sync performs dynamic label parsing and required-label validation.",
                 ok=stage_contracts["lookup_sync_dynamic_labels_present"]["ok"],
+            ),
+            _requirement(
+                requirement_id="lookup_sync_live_fetch_present",
+                description="lookup_sync fetches TBSearch source when inline HTML is not provided.",
+                ok=stage_contracts["lookup_sync_live_fetch_present"]["ok"],
             ),
             _requirement(
                 requirement_id="lookup_sync_no_hardcoded_ids",
@@ -863,6 +1192,11 @@ def evaluate_repo(repo_root: Path) -> dict[str, Any]:
                 ok=stage_contracts["download_artifact_hashing_present"]["ok"],
             ),
             _requirement(
+                requirement_id="download_gcs_uri_present",
+                description="download stage computes gcs_uri via storage path builder.",
+                ok=stage_contracts["download_gcs_uri_present"]["ok"],
+            ),
+            _requirement(
                 requirement_id="download_retry_backoff_rate_limit",
                 description="download includes timeout/retry/backoff/rate-limit behavior.",
                 ok=stage_contracts["download_retry_backoff_rate_limit"]["ok"],
@@ -876,6 +1210,11 @@ def evaluate_repo(repo_root: Path) -> dict[str, Any]:
                 requirement_id="extract_needs_ocr_present",
                 description="extract marks needs_ocr and tracks docs_needs_ocr stats.",
                 ok=stage_contracts["extract_needs_ocr_present"]["ok"],
+            ),
+            _requirement(
+                requirement_id="extract_docx_html_strategy_present",
+                description="extract/segment includes DOCX/HTML handling strategy (converted_pdf or pseudo_page).",
+                ok=stage_contracts["extract_docx_html_strategy_present"]["ok"],
             ),
             _requirement(
                 requirement_id="segment_page_index_deterministic_present",
@@ -908,9 +1247,24 @@ def evaluate_repo(repo_root: Path) -> dict[str, Any]:
                 ok=stage_contracts["validate_invariants_catalog_present"]["ok"],
             ),
             _requirement(
+                requirement_id="validate_page_count_invariant_present",
+                description="validate checks document_versions.page_count against page segments.",
+                ok=stage_contracts["validate_page_count_invariant_present"]["ok"],
+            ),
+            _requirement(
                 requirement_id="reprocess_manifest_pipeline_present",
                 description="reprocess orchestrates manifest -> extract -> segment -> load flow.",
                 ok=stage_contracts["reprocess_manifest_pipeline_present"]["ok"],
+            ),
+            _requirement(
+                requirement_id="reprocess_gcs_cache_fetch_present",
+                description="reprocess fetches artifacts from GCS or local cache (network-free mode).",
+                ok=stage_contracts["reprocess_gcs_cache_fetch_present"]["ok"],
+            ),
+            _requirement(
+                requirement_id="errors_collection_write_present",
+                description="pipeline records structured errors in errors collection payload.",
+                ok=stage_contracts["errors_collection_write_present"]["ok"],
             ),
             _requirement(
                 requirement_id="mongo_collections_contract_present",
@@ -983,6 +1337,21 @@ def evaluate_repo(repo_root: Path) -> dict[str, Any]:
                 description="Mongo layer package exists (jurisparse_un/db).",
                 ok=checked["mongo_layer"]["ok"],
                 details={"path": checked["mongo_layer"]["path"]},
+            ),
+            _requirement(
+                requirement_id="download_writes_gcs_metadata_present",
+                description="download includes explicit GCS metadata wiring in payload/artifacts.",
+                ok=runtime_integrations["download_writes_gcs_metadata_present"]["ok"],
+            ),
+            _requirement(
+                requirement_id="reprocess_fetches_from_gcs_or_cache_present",
+                description="reprocess includes explicit read path from gcs_uri/local cache.",
+                ok=runtime_integrations["reprocess_fetches_from_gcs_or_cache_present"]["ok"],
+            ),
+            _requirement(
+                requirement_id="load_updates_current_version_present",
+                description="load updates documents.current_version_id for latest ingested version.",
+                ok=runtime_integrations["load_updates_current_version_present"]["ok"],
             ),
         ]
     )

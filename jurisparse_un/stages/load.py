@@ -52,6 +52,30 @@ def run(
         from_db=from_db,
         notes=notes,
     )
+    payload.update(
+        load_stage_payload(
+            run_id=run_id,
+            documents=documents,
+            document_versions=document_versions,
+            artifacts=artifacts,
+            segments=segments,
+            source_items=source_items,
+            db_state=db_state,
+        )
+    )
+    return payload
+
+
+def load_stage_payload(
+    *,
+    run_id: str | None = None,
+    documents: Sequence[Mapping[str, Any]] | None = None,
+    document_versions: Sequence[Mapping[str, Any]] | None = None,
+    artifacts: Sequence[Mapping[str, Any]] | None = None,
+    segments: Sequence[Mapping[str, Any]] | None = None,
+    source_items: Sequence[Mapping[str, Any]] | None = None,
+    db_state: MutableMapping[str, list[CoreRow]] | None = None,
+) -> dict[str, Any]:
     state = _coerce_db_state(db_state)
 
     stats = {
@@ -90,13 +114,14 @@ def run(
     state["ingest_runs"].append({"run_id": run_id})
     stats["ingest_runs_inserted"] = 1
 
-    payload["stats"] = stats
-    payload["collection_counts"] = {
-        collection_name: len(state[collection_name])
-        for collection_name in STATE_COLLECTIONS
+    return {
+        "stats": stats,
+        "collection_counts": {
+            collection_name: len(state[collection_name])
+            for collection_name in STATE_COLLECTIONS
+        },
+        "db_state": state,
     }
-    payload["db_state"] = state
-    return payload
 
 
 def _coerce_db_state(

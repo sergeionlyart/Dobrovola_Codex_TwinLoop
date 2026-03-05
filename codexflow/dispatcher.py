@@ -1850,18 +1850,20 @@ class CodexFlowDispatcher:
 
         report["task_id"] = task_id
         report.setdefault("created_at", utc_now_iso())
-        artifacts = report.setdefault("artifacts", {})
-        artifacts.setdefault(
-            "report_json", str((report_dir / "report.json").relative_to(self.paths.repo_root))
-        )
-        artifacts.setdefault(
-            "report_md", str((report_dir / "report.md").relative_to(self.paths.repo_root))
-        )
-        artifacts.setdefault("worker_log", str(stdout_log.relative_to(self.paths.repo_root)))
-        artifacts.setdefault("worker_stderr", str(stderr_log.relative_to(self.paths.repo_root)))
-        artifacts.setdefault(
-            "worker_evidence", str((report_dir / "evidence.json").relative_to(self.paths.repo_root))
-        )
+        artifacts = report.get("artifacts", {})
+        if not isinstance(artifacts, dict):
+            artifacts = {}
+            report["artifacts"] = artifacts
+
+        canonical_artifacts = {
+            "report_json": str((report_dir / "report.json").relative_to(self.paths.repo_root)),
+            "report_md": str((report_dir / "report.md").relative_to(self.paths.repo_root)),
+            "worker_log": str(stdout_log.relative_to(self.paths.repo_root)),
+            "worker_stderr": str(stderr_log.relative_to(self.paths.repo_root)),
+            "worker_evidence": str((report_dir / "evidence.json").relative_to(self.paths.repo_root)),
+        }
+        # Enforce canonical artifact paths even when worker output provides custom values.
+        artifacts.update(canonical_artifacts)
 
         write_json_atomic(report_dir / "report.json", report)
         write_text(report_dir / "report.md", render_report_markdown(report))

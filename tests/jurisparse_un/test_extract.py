@@ -46,3 +46,25 @@ def test_extract_marks_needs_ocr_and_tracks_stats() -> None:
     assert extracted["total_chars"] == 0
     assert extracted["needs_ocr"] is True
     assert payload["stats"]["docs_needs_ocr"] == 1
+
+
+def test_extract_uses_pseudo_page_strategy_for_docx_html_inputs() -> None:
+    payload = run(
+        extract_items=[
+            {
+                "doc_id": "doc-3",
+                "doc_version_id": "docv-3",
+                "source_artifact_id": "artifact-3",
+                "format": "docx",
+                "text": "  Converted  docx content\t",
+            }
+        ],
+        min_total_chars=1,
+    )
+
+    extracted = payload["extracted_items"][0]
+    assert extracted["segment_type"] == "pseudo_page"
+    assert extracted["source_strategy"] == "pseudo_page"
+    assert extracted["page_count"] == 1
+    assert extracted["pages"][0]["page_index"] == 1
+    assert extracted["pages"][0]["text"] == "Converted docx content"

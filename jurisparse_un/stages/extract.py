@@ -24,6 +24,7 @@ def run(
 ) -> dict[str, Any]:
     notes = [
         "PDF extraction is page-level only with explicit 1-based page_index.",
+        "DOCX/HTML fallback uses pseudo_page strategy unless converted_pdf pages are provided.",
         "needs_ocr is derived from total_chars and empty-page ratio.",
     ]
     payload = make_stage_payload(
@@ -62,7 +63,10 @@ def extract_source_items(
     extracted_items: list[dict[str, Any]] = []
 
     for item in extract_items:
-        raw_pages = list(extractor(item))
+        raw_pages, segment_type, source_strategy = _extract_raw_pages(
+            item=item,
+            extractor=extractor,
+        )
         pages = _normalize_pages(raw_pages, source_artifact_id=item.get("source_artifact_id"))
         page_count = len(pages)
         total_chars = sum(page["char_count"] for page in pages)
@@ -88,7 +92,8 @@ def extract_source_items(
                 "doc_symbol": item.get("doc_symbol"),
                 "language": item.get("language"),
                 "source_artifact_id": item.get("source_artifact_id"),
-                "segment_type": "page",
+                "segment_type": segment_type,
+                "source_strategy": source_strategy,
                 "pages": pages,
                 "page_count": page_count,
                 "total_chars": total_chars,
@@ -101,11 +106,38 @@ def extract_source_items(
     return extracted_items
 
 
+def _extract_raw_pages(
+    *,
+    item: dict[str, Any],
+    extractor: PDFPageExtractor,
+) -> tuple[list[str], str, str]:
+    converted_pdf = item.get("converted_pdf_pages")
+    if isinstance(converted_pdf, Sequence) and not isinstance(converted_pdf, (str, bytes)):
+        return _coerce_pages(converted_pdf), "page", "converted_pdf"
+
+    source_format = _coerce_text(item.get("selected_format") or item.get("format")).lower()
+    if source_format in {"docx", "html"}:
+        pseudo_text = _coerce_text(
+            item.get("pseudo_page_text")
+            or item.get("text")
+            or item.get("html_text")
+            or item.get("docx_text")
+        )
+        if pseudo_text:
+            return [pseudo_text], "pseudo_page", "pseudo_page"
+
+    return _coerce_pages(extractor(item)), "page", "pdf"
+
+
 def _default_pdf_page_extractor(item: dict[str, Any]) -> Sequence[str]:
     candidate = item.get("pdf_pages")
     if not isinstance(candidate, Sequence) or isinstance(candidate, (str, bytes)):
         return ()
     return ["" if page is None else str(page) for page in candidate]
+
+
+def _coerce_pages(raw_pages: Sequence[Any]) -> list[str]:
+    return ["" if page is None else str(page) for page in raw_pages]
 
 
 def _normalize_pages(
@@ -139,3 +171,9 @@ def _needs_ocr(
         return True
     empty_ratio = empty_pages / page_count
     return total_chars < min_total_chars or empty_ratio > max_empty_page_ratio
+
+
+def _coerce_text(value: Any) -> str:
+    if value is None:
+        return ""
+    return str(value)

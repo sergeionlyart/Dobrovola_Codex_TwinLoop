@@ -1,0 +1,14 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "jurisparse-un"
+version = "0.1.0"
+description = "Deterministic JurisParse MVP-1 scaffold CLI."
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = []
+
+[project.scripts]
+jurisparse-un = "jurisparse_un.cli:main"

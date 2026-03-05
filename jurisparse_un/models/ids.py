@@ -29,10 +29,9 @@ def make_doc_version_id(doc_id: str, content_sha256: str) -> str:
 
 
 def make_artifact_id(doc_version_id: str, kind: str, sha256: str) -> str:
-    doc_id_norm = _normalize_token(doc_version_id)
+    _ = doc_version_id, kind
     content_sha256_norm = _normalize_token(sha256)
-    kind_norm = _normalize_token(kind)
-    seed = f"artifact|{doc_id_norm}|{kind_norm}|{content_sha256_norm}"
+    seed = f"artifact|{content_sha256_norm}"
     return str(uuid.uuid5(_uuid_namespace, seed))
 
 

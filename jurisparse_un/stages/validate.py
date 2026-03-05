@@ -20,6 +20,7 @@ REQUIRED_INVARIANT_IDS: tuple[str, ...] = (
     "segments_text_sha256_matches",
     "segment_id_deterministic",
     "doc_versions_unique_doc_id_content_sha256",
+    "document_versions_page_count_matches_segments",
     "needs_ocr_has_no_segments",
 )
 
@@ -110,6 +111,16 @@ def run_invariant_checks(
         _result(
             invariant_id="doc_versions_unique_doc_id_content_sha256",
             violations=_check_doc_versions_unique_doc_id_content_sha256(document_versions),
+        )
+    )
+    checks.append(
+        _result(
+            invariant_id="document_versions_page_count_matches_segments",
+            violations=_check_document_versions_page_count_matches_segments(
+                segments=segments,
+                document_versions=document_versions,
+                extracted_items=extracted_items,
+            ),
         )
     )
     checks.append(
@@ -280,6 +291,53 @@ def _check_doc_versions_unique_doc_id_content_sha256(
                     "doc_id": doc_id,
                     "content_sha256": content_sha256,
                     "doc_version_ids": ids,
+                }
+            )
+    return violations
+
+
+def _check_document_versions_page_count_matches_segments(
+    *,
+    segments: Sequence[Mapping[str, Any]],
+    document_versions: Sequence[Mapping[str, Any]],
+    extracted_items: Sequence[Mapping[str, Any]],
+) -> list[InvariantViolation]:
+    segment_counts: dict[str, int] = defaultdict(int)
+    for segment in segments:
+        doc_version_id = _coerce_text(_segment_doc_version_id(segment))
+        if doc_version_id:
+            segment_counts[doc_version_id] += 1
+
+    needs_ocr_doc_versions = _needs_ocr_doc_versions(document_versions, extracted_items)
+    violations: list[InvariantViolation] = []
+    for row in document_versions:
+        doc_version_id = _coerce_text(_doc_version_id(row))
+        if doc_version_id == "":
+            continue
+        page_count = _coerce_page_index(row.get("page_count"))
+        if page_count is None:
+            continue
+
+        segment_count = segment_counts.get(doc_version_id, 0)
+        if doc_version_id in needs_ocr_doc_versions:
+            if segment_count != 0:
+                violations.append(
+                    {
+                        "reason": "needs_ocr_doc_has_segments",
+                        "doc_version_id": doc_version_id,
+                        "page_count": page_count,
+                        "segment_count": segment_count,
+                    }
+                )
+            continue
+
+        if page_count != segment_count:
+            violations.append(
+                {
+                    "reason": "page_count_segment_count_mismatch",
+                    "doc_version_id": doc_version_id,
+                    "page_count": page_count,
+                    "segment_count": segment_count,
                 }
             )
     return violations

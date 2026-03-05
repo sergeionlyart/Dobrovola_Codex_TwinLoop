@@ -5,6 +5,7 @@ from pathlib import Path
 
 import pytest
 
+from jurisparse_un.stages._shared import HTTPResponse
 from jurisparse_un.stages.lookup_sync import (
     required_doc_type_labels,
     required_treaty_labels,
@@ -51,3 +52,26 @@ def test_lookup_sync_run_fail_fast_when_required_labels_missing() -> None:
 
     with pytest.raises(ValueError, match="Working methods"):
         run(tbsearch_html=html)
+
+
+def test_lookup_sync_live_fetch_uses_request_fn_when_inline_html_missing() -> None:
+    html = _read_fixture("lookup_sync_tbsearch_sample.html")
+    calls: list[tuple[str, float]] = []
+
+    def request_fn(*, url: str, timeout_sec: float) -> HTTPResponse:
+        calls.append((url, timeout_sec))
+        return HTTPResponse(status_code=200, content=html.encode("utf-8"))
+
+    payload = run(
+        tbsearch_html=None,
+        tbsearch_url="https://example.test/tbsearch",
+        timeout_sec=12.5,
+        request_fn=request_fn,
+    )
+
+    assert calls == [("https://example.test/tbsearch", 12.5)]
+    assert payload["tbsearch_fetch"]["source"] == "live_fetch"
+    assert payload["tb_lookups"]["tbsearch_url"] == "https://example.test/tbsearch"
+    assert set(required_treaty_labels).issubset(
+        _labels(payload["tb_lookups"]["lookups"]["treaties"])
+    )

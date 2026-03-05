@@ -1,0 +1,60 @@
+{
+  "task_id": "TSK-0005",
+  "run_id": "RUN-2026-03-05-001",
+  "created_at": "2026-03-05T09:23:22Z",
+  "objective": "Fix artifacts block in .codexflow/reports/TSK-0004/report.json and verify path+existence checks.",
+  "notes": [
+    "Objective target already matched expected artifact paths; no edit to TSK-0004 report.json content was required.",
+    "Required quality-gate commands from task definition were executed and passed for lookup_sync subset."
+  ],
+  "dod_evidence": [
+    {
+      "techspec_dod_ref": "TSK-0005 DoD: lookup_sync_dynamic_labels_present",
+      "evidence_type": "command",
+      "evidence_ref": "python -c \"import json; d=json.load(open('.codexflow/_tmp/tsk-0004-check.json')); assert d['checked']['stage_contracts']['lookup_sync_dynamic_labels_present']['ok']; assert d['checked']['stage_contracts']['lookup_sync_no_hardcoded_ids']['ok']; assert d['checked']['test_contracts']['lookup_sync_fixtures_present']['ok']\"",
+      "evidence_result": "passed (lookup_sync_dynamic_labels_present == true)"
+    },
+    {
+      "techspec_dod_ref": "TSK-0005 DoD: lookup_sync_no_hardcoded_ids",
+      "evidence_type": "command",
+      "evidence_ref": "python -c \"import json; d=json.load(open('.codexflow/_tmp/tsk-0004-check.json')); assert d['checked']['stage_contracts']['lookup_sync_dynamic_labels_present']['ok']; assert d['checked']['stage_contracts']['lookup_sync_no_hardcoded_ids']['ok']; assert d['checked']['test_contracts']['lookup_sync_fixtures_present']['ok']\"",
+      "evidence_result": "passed (lookup_sync_no_hardcoded_ids == true)"
+    },
+    {
+      "techspec_dod_ref": "TSK-0005 DoD: lookup_sync_fixtures_present",
+      "evidence_type": "command",
+      "evidence_ref": "python -c \"import json; d=json.load(open('.codexflow/_tmp/tsk-0004-check.json')); assert d['checked']['stage_contracts']['lookup_sync_dynamic_labels_present']['ok']; assert d['checked']['stage_contracts']['lookup_sync_no_hardcoded_ids']['ok']; assert d['checked']['test_contracts']['lookup_sync_fixtures_present']['ok']\"",
+      "evidence_result": "passed (lookup_sync_fixtures_present == true)"
+    },
+    {
+      "techspec_dod_ref": "TSK-0005 DoD: fixtures exist and are non-empty",
+      "evidence_type": "command",
+      "evidence_ref": "wc -c tests/fixtures/lookup_sync_tbsearch_sample.html tests/fixtures/lookup_sync_tbsearch_missing_required_label.html",
+      "evidence_result": "996 and 692 bytes"
+    },
+    {
+      "techspec_dod_ref": "TSK-0005 DoD: tests file includes success and fail-fast cases",
+      "evidence_type": "command",
+      "evidence_ref": "rg -n \"test_lookup_sync_run_parses_dynamic_labels_and_hashes_html|test_lookup_sync_run_fail_fast_when_required_labels_missing\" tests/jurisparse_un/test_lookup_sync.py",
+      "evidence_result": "both test names found at lines 25 and 49"
+    },
+    {
+      "techspec_dod_ref": "TSK-0005 DoD: ruff and pytest pass",
+      "evidence_type": "test",
+      "evidence_ref": "ruff check jurisparse_un/stages/lookup_sync.py tests/jurisparse_un/test_lookup_sync.py; pytest -q tests/jurisparse_un/test_lookup_sync.py",
+      "evidence_result": "both commands exited 0"
+    },
+    {
+      "techspec_dod_ref": "TSK-0005 DoD: worker report contains explicit DoD→evidence mapping",
+      "evidence_type": "artifact",
+      "evidence_ref": ".codexflow/reports/TSK-0005/evidence.json",
+      "evidence_result": "present"
+    },
+    {
+      "techspec_dod_ref": "TSK-0005 DoD: artifacts block fixed and objective verification exits 0",
+      "evidence_type": "command",
+      "evidence_ref": "python - <<'PY' ... artifacts_ok ... PY",
+      "evidence_result": "artifacts_ok"
+    }
+  ]
+}

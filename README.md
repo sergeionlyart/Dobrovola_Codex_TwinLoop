@@ -81,7 +81,7 @@ Its purpose is to:
 - measure how much of the TechSpec is actually closed after each accepted task;
 - keep iterating until the product-checker confirms completion.
 
-For a concise public case study of this repository, see [TwinLoop on Dobrovola](https://dobrovola.dev/pl/work/twinloop).
+For a concise public case study of this repository, see [TwinLoop on Dobrovola](https://dobrovola.dev/en/work/twinloop).
 
 ### 3.2. The two roles
 
